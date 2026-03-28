@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:media_kit/media_kit.dart';
 import 'data/datasources/remote/xtream_api.dart';
 import 'presentation/screens/profiles/profiles_screen.dart';
 import 'presentation/screens/favorites/favorites_screen.dart';
@@ -12,7 +11,6 @@ void main() async {
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
-  MediaKit.ensureInitialized();
   runApp(const MyApp());
 }
 

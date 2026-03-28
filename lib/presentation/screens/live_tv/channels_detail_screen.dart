@@ -1,8 +1,9 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:media_kit/media_kit.dart';
-import 'package:media_kit_video/media_kit_video.dart';
+import 'package:tha_player/tha_player.dart';
+
 import '../../../data/datasources/remote/xtream_api.dart';
 import '../../../data/models/channel.dart';
 import '../../../data/models/live_tv_category.dart';
@@ -19,66 +20,47 @@ class ChannelsDetailScreen extends StatefulWidget {
   });
 
   @override
-  State<ChannelsDetailScreen> createState() =>
-      _ChannelsDetailScreenState();
+  State<ChannelsDetailScreen> createState() => _ChannelsDetailScreenState();
 }
 
 class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
   late Future<List<Channel>> _channelsFuture;
+
   int _selectedChannelIndex = 0;
-  late final Player _player;
-  late final VideoController _controller;
+  ThaNativePlayerController? _playerController;
+
   bool _isFavorite = false;
   bool _isBuffering = false;
   bool _hasError = false;
-  String _resolution = '';
-  String _fps = '';
-  String _errorMessage = '';
   bool _usingM3u8 = false;
+  bool _isPlaying = true;
+  bool _isFullscreen = false;
+
+  String _errorMessage = '';
   int _retryCount = 0;
+
   static const int _maxRetries = 3;
   static const Map<String, String> _streamHttpHeaders = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
     'Connection': 'keep-alive',
   };
 
-  StreamSubscription? _bufferingSubscription;
-  StreamSubscription? _videoParamsSubscription;
-  StreamSubscription? _tracksSubscription;
-  StreamSubscription? _errorSubscription;
   Timer? _fallbackTimer;
   Timer? _retryTimer;
+  Timer? _bufferingGuardTimer;
 
   void _forceLandscape() {
     SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
-    SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.immersiveSticky,
-    );
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
 
   @override
   void initState() {
     super.initState();
     _forceLandscape();
-
-    _player = Player(
-      configuration: const PlayerConfiguration(
-        bufferSize: 32 * 1024 * 1024,
-        logLevel: MPVLogLevel.warn,
-      ),
-    );
-
-    _controller = VideoController(
-      _player,
-      configuration: const VideoControllerConfiguration(
-        enableHardwareAcceleration: true,
-      ),
-    );
-
-    _setupListeners();
     _channelsFuture = _loadChannels();
   }
 
@@ -88,85 +70,11 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
     _forceLandscape();
   }
 
-  void _setupListeners() {
-    _bufferingSubscription =
-        _player.stream.buffering.listen((buffering) {
-      if (mounted) setState(() => _isBuffering = buffering);
-    });
-
-    _videoParamsSubscription =
-        _player.stream.videoParams.listen((params) {
-      if (mounted && params.w != null && params.h != null) {
-        _fallbackTimer?.cancel();
-        _retryTimer?.cancel();
-        setState(() {
-          _resolution = '${params.w}x${params.h}';
-          _hasError = false;
-          _isBuffering = false;
-          _retryCount = 0;
-        });
-      }
-    });
-
-    _tracksSubscription = _player.stream.tracks.listen((tracks) {
-      if (mounted && tracks.video.isNotEmpty) {
-        for (final track in tracks.video) {
-          if (track.fps != null && track.fps! > 0) {
-            if (mounted) {
-              setState(() {
-                _fps = '${track.fps!.toStringAsFixed(0)} FPS';
-              });
-            }
-            break;
-          }
-        }
-      }
-    });
-
-    _errorSubscription = _player.stream.error.listen((error) {
-      if (mounted && error.isNotEmpty) {
-        debugPrint('Player error: $error');
-        _handleError();
-      }
-    });
-  }
-
-  void _handleError() {
-    if (!mounted) return;
-    _fallbackTimer?.cancel();
-
-    if (!_usingM3u8) {
-      debugPrint('Switching to m3u8...');
-      _channelsFuture.then((channels) {
-        if (mounted && channels.isNotEmpty) {
-          _tryM3u8Fallback(channels[_selectedChannelIndex]);
-        }
-      });
-    } else if (_retryCount < _maxRetries) {
-      _retryCount++;
-      debugPrint('Retry $_retryCount/$_maxRetries...');
-      _retryTimer = Timer(const Duration(seconds: 2), () {
-        if (mounted) {
-          _channelsFuture.then((channels) {
-            if (mounted && channels.isNotEmpty) {
-              _playStream(channels[_selectedChannelIndex]);
-            }
-          });
-        }
-      });
-    } else {
-      setState(() {
-        _hasError = true;
-        _errorMessage = 'Stream unavailable';
-        _isBuffering = false;
-      });
-    }
-  }
-
   Future<List<Channel>> _loadChannels() async {
     final rawChannels = await widget.xtreamApi.getLiveStreams(
       categoryId: widget.category.id,
     );
+
     final channels = rawChannels
         .map((json) => Channel.fromJson(
               json,
@@ -187,6 +95,8 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
   Future<void> _playStream(Channel channel) async {
     _fallbackTimer?.cancel();
     _retryTimer?.cancel();
+    _bufferingGuardTimer?.cancel();
+
     _usingM3u8 = false;
     _retryCount = 0;
 
@@ -194,76 +104,62 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
       setState(() {
         _hasError = false;
         _isBuffering = true;
-        _resolution = '';
-        _fps = '';
+        _isPlaying = true;
         _errorMessage = '';
       });
     }
 
-    try {
-      await _player.open(
-        Media(
-          channel.streamUrl,
-          httpHeaders: _streamHttpHeaders,
-        ),
-        play: true,
-      );
+    await _replacePlayer(channel.streamUrl);
 
-      _fallbackTimer = Timer(const Duration(seconds: 8), () {
-        if (mounted && _resolution.isEmpty && !_hasError) {
-          debugPrint('No video after 8s, trying m3u8...');
-          _tryM3u8Fallback(channel);
-        }
-      });
-    } catch (e) {
-      debugPrint('playStream error: $e');
-      _tryM3u8Fallback(channel);
-    }
+    _fallbackTimer = Timer(const Duration(seconds: 8), () {
+      if (mounted && _isBuffering && !_hasError) {
+        _tryM3u8Fallback(channel);
+      }
+    });
+  }
+
+  Future<void> _replacePlayer(String url) async {
+    final previousController = _playerController;
+
+    final nextController = ThaNativePlayerController.single(
+      ThaMediaSource(url, headers: _streamHttpHeaders),
+      autoPlay: true,
+    );
+
+    setState(() {
+      _playerController = nextController;
+      _isPlaying = true;
+      _isBuffering = true;
+    });
+
+    // Tha player does not expose buffering callbacks in this screen,
+    // so we clear the loading spinner after a short guard window.
+    _bufferingGuardTimer = Timer(const Duration(seconds: 2), () {
+      if (!mounted || _playerController != nextController) return;
+      setState(() => _isBuffering = false);
+    });
+
+    previousController?.dispose();
   }
 
   Future<void> _tryM3u8Fallback(Channel channel) async {
     if (!mounted) return;
+
     _fallbackTimer?.cancel();
     _usingM3u8 = true;
 
-    debugPrint('Trying m3u8: ${channel.streamUrlM3u8}');
+    setState(() {
+      _isBuffering = true;
+      _hasError = false;
+    });
 
-    if (mounted) {
-      setState(() {
-        _isBuffering = true;
-        _hasError = false;
-        _resolution = '';
-      });
-    }
+    await _replacePlayer(channel.streamUrlM3u8);
 
-    try {
-      await _player.open(
-        Media(
-          channel.streamUrlM3u8,
-          httpHeaders: _streamHttpHeaders,
-        ),
-        play: true,
-      );
-
-      _fallbackTimer = Timer(const Duration(seconds: 8), () {
-        if (mounted && _resolution.isEmpty) {
-          setState(() {
-            _hasError = true;
-            _errorMessage = 'Stream unavailable';
-            _isBuffering = false;
-          });
-        }
-      });
-    } catch (e) {
-      debugPrint('m3u8 error: $e');
-      if (mounted) {
-        setState(() {
-          _hasError = true;
-          _errorMessage = 'Stream unavailable';
-          _isBuffering = false;
-        });
+    _fallbackTimer = Timer(const Duration(seconds: 8), () {
+      if (mounted && _isBuffering) {
+        _handleError();
       }
-    }
+    });
   }
 
   Future<void> _loadFavoriteStatus(String channelId) async {
@@ -271,26 +167,66 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
     if (mounted) setState(() => _isFavorite = fav);
   }
 
-  void _toggleFavorite(Channel channel) async {
+  Future<void> _toggleFavorite(Channel channel) async {
     if (_isFavorite) {
       await FavoritesManager.removeFavorite(channel.id.toString());
     } else {
       await FavoritesManager.addFavorite(channel.id.toString());
     }
-    if (mounted) setState(() => _isFavorite = !_isFavorite);
+
+    if (mounted) {
+      setState(() => _isFavorite = !_isFavorite);
+    }
   }
 
   void _onChannelSelected(Channel channel, int index) async {
     if (_selectedChannelIndex == index) return;
+
     setState(() {
       _selectedChannelIndex = index;
       _isBuffering = true;
       _hasError = false;
-      _resolution = '';
-      _fps = '';
+      _errorMessage = '';
     });
+
     await _playStream(channel);
     await _loadFavoriteStatus(channel.id.toString());
+  }
+
+  void _onPlayerError(String? _) {
+    _handleError();
+  }
+
+  void _handleError() {
+    if (!mounted) return;
+
+    _fallbackTimer?.cancel();
+    _retryTimer?.cancel();
+
+    if (!_usingM3u8) {
+      _channelsFuture.then((channels) {
+        if (!mounted || channels.isEmpty) return;
+        _tryM3u8Fallback(channels[_selectedChannelIndex]);
+      });
+      return;
+    }
+
+    if (_retryCount < _maxRetries) {
+      _retryCount++;
+      _retryTimer = Timer(const Duration(seconds: 2), () {
+        _channelsFuture.then((channels) {
+          if (!mounted || channels.isEmpty) return;
+          _playStream(channels[_selectedChannelIndex]);
+        });
+      });
+      return;
+    }
+
+    setState(() {
+      _hasError = true;
+      _errorMessage = 'Stream unavailable';
+      _isBuffering = false;
+    });
   }
 
   void _retryStream(List<Channel> channels) {
@@ -301,16 +237,30 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
     _playStream(channels[_selectedChannelIndex]);
   }
 
+  Future<void> _togglePlayPause() async {
+    final controller = _playerController;
+    if (controller == null) return;
+
+    if (_isPlaying) {
+      await controller.pause();
+    } else {
+      await controller.play();
+    }
+
+    if (mounted) {
+      setState(() {
+        _isPlaying = !_isPlaying;
+      });
+    }
+  }
+
   @override
   void dispose() {
     _forceLandscape();
     _fallbackTimer?.cancel();
     _retryTimer?.cancel();
-    _bufferingSubscription?.cancel();
-    _videoParamsSubscription?.cancel();
-    _tracksSubscription?.cancel();
-    _errorSubscription?.cancel();
-    _player.dispose();
+    _bufferingGuardTimer?.cancel();
+    _playerController?.dispose();
     super.dispose();
   }
 
@@ -320,16 +270,23 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
 
     return WillPopScope(
       onWillPop: () async {
+        if (_isFullscreen) {
+          setState(() => _isFullscreen = false);
+          return false;
+        }
+
         _forceLandscape();
         return true;
       },
       child: Scaffold(
         backgroundColor: const Color(0xFF1E1E1E),
-        appBar: AppBar(
-          title: Text(widget.category.name),
-          backgroundColor: const Color(0xFF0F0F1A),
-          elevation: 0,
-        ),
+        appBar: _isFullscreen
+            ? null
+            : AppBar(
+                title: Text(widget.category.name),
+                backgroundColor: const Color(0xFF0F0F1A),
+                elevation: 0,
+              ),
         body: FutureBuilder<List<Channel>>(
           future: _channelsFuture,
           builder: (context, snapshot) {
@@ -345,9 +302,11 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
                 ),
               );
             }
+
             if (snapshot.hasError) {
               return Center(child: Text('Error: ${snapshot.error}'));
             }
+
             if (!snapshot.hasData || snapshot.data!.isEmpty) {
               return const Center(child: Text('No channels found'));
             }
@@ -355,9 +314,16 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
             final channels = snapshot.data!;
             final selectedChannel = channels[_selectedChannelIndex];
 
+            if (_isFullscreen) {
+              return _buildPlayerArea(
+                selectedChannel: selectedChannel,
+                channels: channels,
+                fullscreenOnly: true,
+              );
+            }
+
             return Row(
               children: [
-                // Left: Channel List 30%
                 Container(
                   width: size.width * 0.3,
                   color: const Color(0xFF0F0F1A),
@@ -385,15 +351,14 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
                           itemCount: channels.length,
                           itemBuilder: (context, index) {
                             final channel = channels[index];
-                            final isSelected =
-                                index == _selectedChannelIndex;
+                            final isSelected = index == _selectedChannelIndex;
+
                             return Material(
                               color: isSelected
                                   ? const Color(0xFF1A3A5C)
                                   : Colors.transparent,
                               child: InkWell(
-                                onTap: () =>
-                                    _onChannelSelected(channel, index),
+                                onTap: () => _onChannelSelected(channel, index),
                                 child: Padding(
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 12,
@@ -407,17 +372,14 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
                                           width: 40,
                                           height: 40,
                                           decoration: BoxDecoration(
-                                            color:
-                                                const Color(0xFF1E1E2E),
+                                            color: const Color(0xFF1E1E2E),
                                             borderRadius:
                                                 BorderRadius.circular(6),
                                           ),
-                                          child: channel
-                                                  .logoUrl.isNotEmpty
+                                          child: channel.logoUrl.isNotEmpty
                                               ? ClipRRect(
                                                   borderRadius:
-                                                      BorderRadius.circular(
-                                                          6),
+                                                      BorderRadius.circular(6),
                                                   child: Image.network(
                                                     channel.logoUrl,
                                                     cacheWidth: 400,
@@ -425,9 +387,8 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
                                                     filterQuality:
                                                         FilterQuality.low,
                                                     fit: BoxFit.contain,
-                                                    errorBuilder:
-                                                        (_, __, ___) =>
-                                                            const Icon(
+                                                    errorBuilder: (_, __, ___) =>
+                                                        const Icon(
                                                       Icons.tv,
                                                       color: Colors.white54,
                                                       size: 20,
@@ -454,8 +415,7 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
                                                   : FontWeight.normal,
                                             ),
                                             maxLines: 2,
-                                            overflow:
-                                                TextOverflow.ellipsis,
+                                            overflow: TextOverflow.ellipsis,
                                           ),
                                         ),
                                         if (isSelected)
@@ -476,179 +436,17 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
                     ],
                   ),
                 ),
-
-                // Right: Video + Info 70%
                 Expanded(
                   child: Column(
                     children: [
-                      // Video Player
-                      Container(
+                      SizedBox(
                         height: (size.height - kToolbarHeight) * 0.62,
-                        color: Colors.black,
-                        child: Stack(
-                          children: [
-                            SizedBox.expand(
-                              child: RepaintBoundary(
-                                child: Video(
-                                  controller: _controller,
-                                  fit: BoxFit.contain,
-                                  // KEY FIX: use custom fullscreen
-                                  // that always keeps landscape
-                                  onEnterFullscreen: () async {
-                                    await SystemChrome
-                                        .setEnabledSystemUIMode(
-                                      SystemUiMode.immersiveSticky,
-                                    );
-                                    await SystemChrome
-                                        .setPreferredOrientations([
-                                      DeviceOrientation.landscapeLeft,
-                                      DeviceOrientation.landscapeRight,
-                                    ]);
-                                  },
-                                  onExitFullscreen: () async {
-                                    await SystemChrome
-                                        .setEnabledSystemUIMode(
-                                      SystemUiMode.manual,
-                                      overlays: SystemUiOverlay.values,
-                                    );
-                                    // Always landscape — never portrait
-                                    await SystemChrome
-                                        .setPreferredOrientations([
-                                      DeviceOrientation.landscapeLeft,
-                                      DeviceOrientation.landscapeRight,
-                                    ]);
-                                  },
-                                ),
-                              ),
-                            ),
-
-                            // Buffering overlay
-                            if (_isBuffering && !_hasError)
-                              Container(
-                                color: Colors.black87,
-                                child: Center(
-                                  child: Column(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.center,
-                                    children: [
-                                      const CircularProgressIndicator(
-                                        color: Colors.white,
-                                        strokeWidth: 2,
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Text(
-                                        'Loading ${selectedChannel.name}...',
-                                        style: const TextStyle(
-                                          color: Colors.white70,
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      if (_usingM3u8)
-                                        const Text(
-                                          'Trying HLS stream...',
-                                          style: TextStyle(
-                                            color: Colors.white38,
-                                            fontSize: 11,
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-
-                            // Error overlay
-                            if (_hasError)
-                              Container(
-                                color: Colors.black87,
-                                child: Center(
-                                  child: Column(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.center,
-                                    children: [
-                                      const Icon(
-                                        Icons.error_outline,
-                                        color: Colors.red,
-                                        size: 48,
-                                      ),
-                                      const SizedBox(height: 12),
-                                      Text(
-                                        _errorMessage,
-                                        style: const TextStyle(
-                                          color: Colors.white70,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 16),
-                                      ElevatedButton.icon(
-                                        onPressed: () =>
-                                            _retryStream(channels),
-                                        icon:
-                                            const Icon(Icons.refresh),
-                                        label: const Text('Retry'),
-                                        style: ElevatedButton.styleFrom(
-                                          backgroundColor: Colors.blue,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-
-                            // Resolution/FPS overlay
-                            if (_resolution.isNotEmpty ||
-                                _fps.isNotEmpty)
-                              Positioned(
-                                top: 8,
-                                right: 8,
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.black
-                                        .withValues(alpha: 0.7),
-                                    borderRadius:
-                                        BorderRadius.circular(6),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.end,
-                                    children: [
-                                      if (_resolution.isNotEmpty)
-                                        Text(
-                                          _resolution,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 12,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      if (_fps.isNotEmpty)
-                                        Text(
-                                          _fps,
-                                          style: const TextStyle(
-                                            color: Colors.white70,
-                                            fontSize: 11,
-                                          ),
-                                        ),
-                                      if (_usingM3u8)
-                                        const Text(
-                                          'HLS',
-                                          style: TextStyle(
-                                            color: Colors.greenAccent,
-                                            fontSize: 10,
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                          ],
+                        child: _buildPlayerArea(
+                          selectedChannel: selectedChannel,
+                          channels: channels,
+                          fullscreenOnly: false,
                         ),
                       ),
-
-                      // Info Panel
                       Expanded(
                         child: Container(
                           color: const Color(0xFF1E1E1E),
@@ -656,33 +454,28 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // Channel name and logo
                               Row(
                                 children: [
-                                  if (selectedChannel
-                                      .logoUrl.isNotEmpty)
+                                  if (selectedChannel.logoUrl.isNotEmpty)
                                     Container(
                                       width: 50,
                                       height: 50,
-                                      margin: const EdgeInsets.only(
-                                          right: 12),
+                                      margin:
+                                          const EdgeInsets.only(right: 12),
                                       decoration: BoxDecoration(
                                         color: const Color(0xFF0F0F1A),
-                                        borderRadius:
-                                            BorderRadius.circular(8),
+                                        borderRadius: BorderRadius.circular(8),
                                       ),
                                       child: ClipRRect(
-                                        borderRadius:
-                                            BorderRadius.circular(8),
+                                        borderRadius: BorderRadius.circular(8),
                                         child: Image.network(
                                           selectedChannel.logoUrl,
                                           cacheWidth: 400,
                                           cacheHeight: 450,
-                                          filterQuality:
-                                              FilterQuality.low,
+                                          filterQuality: FilterQuality.low,
                                           fit: BoxFit.contain,
-                                          errorBuilder:
-                                              (_, __, ___) => const Icon(
+                                          errorBuilder: (_, __, ___) =>
+                                              const Icon(
                                             Icons.tv,
                                             color: Colors.white54,
                                           ),
@@ -703,34 +496,28 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
                                   ),
                                 ],
                               ),
-
                               const SizedBox(height: 12),
-
-                              // Stream info chips
                               Row(
                                 children: [
-                                  if (_resolution.isNotEmpty)
-                                    _infoChip(Icons.hd, _resolution),
-                                  if (_resolution.isNotEmpty)
-                                    const SizedBox(width: 8),
-                                  if (_fps.isNotEmpty)
-                                    _infoChip(Icons.speed, _fps),
-                                  if (_fps.isNotEmpty)
-                                    const SizedBox(width: 8),
-                                  if (_usingM3u8)
-                                    _infoChip(Icons.stream, 'HLS'),
+                                  _infoChip(
+                                    Icons.stream,
+                                    _usingM3u8 ? 'HLS Stream' : 'Main Stream',
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _infoChip(
+                                    _isPlaying
+                                        ? Icons.play_circle
+                                        : Icons.pause_circle,
+                                    _isPlaying ? 'Playing' : 'Paused',
+                                  ),
                                 ],
                               ),
-
                               const SizedBox(height: 16),
-
-                              // EPG placeholder
                               Container(
                                 padding: const EdgeInsets.all(12),
                                 decoration: BoxDecoration(
                                   color: const Color(0xFF0F0F1A),
-                                  borderRadius:
-                                      BorderRadius.circular(8),
+                                  borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: const Row(
                                   children: [
@@ -750,20 +537,15 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
                                   ],
                                 ),
                               ),
-
                               const SizedBox(height: 16),
-
-                              // Favorite button
                               ElevatedButton.icon(
-                                onPressed: () =>
-                                    _toggleFavorite(selectedChannel),
+                                onPressed: () => _toggleFavorite(selectedChannel),
                                 icon: Icon(
                                   _isFavorite
                                       ? Icons.favorite
                                       : Icons.favorite_border,
-                                  color: _isFavorite
-                                      ? Colors.red
-                                      : Colors.white,
+                                  color:
+                                      _isFavorite ? Colors.red : Colors.white,
                                 ),
                                 label: Text(
                                   _isFavorite
@@ -771,8 +553,7 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
                                       : 'Add to Favorites',
                                 ),
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor:
-                                      const Color(0xFF1A1A2E),
+                                  backgroundColor: const Color(0xFF1A1A2E),
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 20,
                                     vertical: 12,
@@ -794,12 +575,132 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
     );
   }
 
+  Widget _buildPlayerArea({
+    required Channel selectedChannel,
+    required List<Channel> channels,
+    required bool fullscreenOnly,
+  }) {
+    final controller = _playerController;
+
+    if (controller == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return Container(
+      color: Colors.black,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: ThaModernPlayer(
+              key: ValueKey(selectedChannel.id),
+              controller: controller,
+              autoHideAfter: const Duration(seconds: 3),
+              initialBoxFit: BoxFit.contain,
+              autoFullscreen: false,
+              isFullscreen: fullscreenOnly,
+              doubleTapSeek: const Duration(seconds: 0),
+              overlay: const SizedBox.shrink(),
+              onError: _onPlayerError,
+            ),
+          ),
+          Positioned(
+            right: 12,
+            bottom: 12,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    onPressed: _togglePlayPause,
+                    icon: Icon(
+                      _isPlaying ? Icons.stop : Icons.play_arrow,
+                      color: Colors.white,
+                    ),
+                    tooltip: _isPlaying ? 'Stop' : 'Play',
+                  ),
+                  IconButton(
+                    onPressed: () {
+                      setState(() => _isFullscreen = !_isFullscreen);
+                    },
+                    icon: Icon(
+                      _isFullscreen
+                          ? Icons.fullscreen_exit
+                          : Icons.fullscreen,
+                      color: Colors.white,
+                    ),
+                    tooltip: _isFullscreen
+                        ? 'Exit fullscreen'
+                        : 'Fullscreen',
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_isBuffering && !_hasError)
+            Container(
+              color: Colors.black87,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Loading ${selectedChannel.name}...',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if (_hasError)
+            Container(
+              color: Colors.black87,
+              child: Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.error_outline,
+                      color: Colors.red,
+                      size: 48,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      _errorMessage,
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      onPressed: () => _retryStream(channels),
+                      icon: const Icon(Icons.refresh),
+                      label: const Text('Retry'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.blue,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _infoChip(IconData icon, String label) {
     return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: 10,
-        vertical: 6,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: const Color(0xFF0F0F1A),
         borderRadius: BorderRadius.circular(8),
