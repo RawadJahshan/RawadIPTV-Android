@@ -35,6 +35,11 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
   bool _usingM3u8 = false;
   bool _isPlaying = true;
   bool _isFullscreen = false;
+  bool _showControls = true;
+  bool _isScrubbing = false;
+
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
 
   String _errorMessage = '';
   int _retryCount = 0;
@@ -48,6 +53,7 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
   Timer? _fallbackTimer;
   Timer? _retryTimer;
   Timer? _bufferingGuardTimer;
+  Timer? _controlsHideTimer;
 
   void _forceLandscape() {
     SystemChrome.setPreferredOrientations([
@@ -130,7 +136,12 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
       _playerController = nextController;
       _isPlaying = true;
       _isBuffering = true;
+      _position = Duration.zero;
+      _duration = Duration.zero;
     });
+
+    nextController.playbackState.addListener(_syncPlaybackState);
+    _showControlsNow();
 
     // Tha player does not expose buffering callbacks in this screen,
     // so we clear the loading spinner after a short guard window.
@@ -139,7 +150,25 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
       setState(() => _isBuffering = false);
     });
 
+    previousController?.playbackState.removeListener(_syncPlaybackState);
     previousController?.dispose();
+  }
+
+  void _syncPlaybackState() {
+    final controller = _playerController;
+    if (controller == null || !mounted) return;
+
+    final state = controller.playbackState.value;
+    final isLive = state.duration.inMilliseconds <= 0;
+
+    setState(() {
+      _isPlaying = state.isPlaying;
+      _position = state.position;
+      _duration = state.duration;
+      if (isLive) {
+        _position = Duration.zero;
+      }
+    });
   }
 
   Future<void> _tryM3u8Fallback(Channel channel) async {
@@ -248,10 +277,33 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
     }
 
     if (mounted) {
-      setState(() {
-        _isPlaying = !_isPlaying;
-      });
+      _showControlsNow();
     }
+  }
+
+  bool get _canSeek => _duration.inMilliseconds > 0;
+
+  void _showControlsNow() {
+    if (!mounted) return;
+
+    _controlsHideTimer?.cancel();
+    setState(() => _showControls = true);
+
+    _controlsHideTimer = Timer(const Duration(seconds: 4), () {
+      if (!mounted || _isScrubbing || !_isPlaying) return;
+      setState(() => _showControls = false);
+    });
+  }
+
+  String _formatDuration(Duration value) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final hours = value.inHours;
+    final minutes = value.inMinutes.remainder(60);
+    final seconds = value.inSeconds.remainder(60);
+    if (hours > 0) {
+      return '${twoDigits(hours)}:${twoDigits(minutes)}:${twoDigits(seconds)}';
+    }
+    return '${twoDigits(minutes)}:${twoDigits(seconds)}';
   }
 
   @override
@@ -260,6 +312,8 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
     _fallbackTimer?.cancel();
     _retryTimer?.cancel();
     _bufferingGuardTimer?.cancel();
+    _controlsHideTimer?.cancel();
+    _playerController?.playbackState.removeListener(_syncPlaybackState);
     _playerController?.dispose();
     super.dispose();
   }
@@ -588,11 +642,20 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
 
     return Container(
       color: Colors.black,
-      child: Stack(
-        children: [
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {
+          if (_showControls) {
+            _controlsHideTimer?.cancel();
+            setState(() => _showControls = false);
+          } else {
+            _showControlsNow();
+          }
+        },
+        child: Stack(
+          children: [
           Positioned.fill(
             child: ThaModernPlayer(
-              key: ValueKey(selectedChannel.id),
               controller: controller,
               autoHideAfter: const Duration(seconds: 3),
               initialBoxFit: BoxFit.contain,
@@ -603,43 +666,128 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
               onError: _onPlayerError,
             ),
           ),
-          Positioned(
-            right: 12,
-            bottom: 12,
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.55),
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    onPressed: _togglePlayPause,
-                    icon: Icon(
-                      _isPlaying ? Icons.stop : Icons.play_arrow,
-                      color: Colors.white,
+          if (_showControls)
+            Positioned.fill(
+              child: IgnorePointer(
+                ignoring: _hasError || _isBuffering,
+                child: Container(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black.withValues(alpha: 0.30),
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: 0.45),
+                      ],
+                      stops: const [0.0, 0.55, 1.0],
                     ),
-                    tooltip: _isPlaying ? 'Stop' : 'Play',
                   ),
-                  IconButton(
-                    onPressed: () {
-                      setState(() => _isFullscreen = !_isFullscreen);
-                    },
-                    icon: Icon(
-                      _isFullscreen
-                          ? Icons.fullscreen_exit
-                          : Icons.fullscreen,
-                      color: Colors.white,
-                    ),
-                    tooltip: _isFullscreen
-                        ? 'Exit fullscreen'
-                        : 'Fullscreen',
+                  child: Column(
+                    children: [
+                      const Spacer(),
+                      IconButton(
+                        onPressed: _togglePlayPause,
+                        iconSize: 56,
+                        icon: Icon(
+                          _isPlaying ? Icons.stop_circle : Icons.play_circle,
+                          color: Colors.white,
+                        ),
+                        tooltip: _isPlaying ? 'Stop' : 'Play',
+                      ),
+                      const Spacer(),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  SliderTheme(
+                                    data: SliderTheme.of(context).copyWith(
+                                      trackHeight: 3,
+                                      thumbShape: const RoundSliderThumbShape(
+                                        enabledThumbRadius: 6,
+                                      ),
+                                    ),
+                                    child: Slider(
+                                      min: 0,
+                                      max: _canSeek
+                                          ? _duration.inMilliseconds.toDouble()
+                                          : 1,
+                                      value: _canSeek
+                                          ? _position.inMilliseconds
+                                                .clamp(
+                                                  0,
+                                                  _duration.inMilliseconds,
+                                                )
+                                                .toDouble()
+                                          : 0,
+                                      onChanged: _canSeek
+                                          ? (value) {
+                                              setState(() {
+                                                _isScrubbing = true;
+                                                _position = Duration(
+                                                  milliseconds: value.toInt(),
+                                                );
+                                              });
+                                            }
+                                          : null,
+                                      onChangeEnd: _canSeek
+                                          ? (value) async {
+                                              await controller.seekTo(
+                                                Duration(
+                                                  milliseconds: value.toInt(),
+                                                ),
+                                              );
+                                              if (!mounted) return;
+                                              setState(() {
+                                                _isScrubbing = false;
+                                              });
+                                              _showControlsNow();
+                                            }
+                                          : null,
+                                    ),
+                                  ),
+                                  Text(
+                                    _canSeek
+                                        ? '${_formatDuration(_position)} / ${_formatDuration(_duration)}'
+                                        : 'LIVE',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            IconButton(
+                              onPressed: () {
+                                setState(() => _isFullscreen = !_isFullscreen);
+                                _showControlsNow();
+                              },
+                              icon: Icon(
+                                _isFullscreen
+                                    ? Icons.fullscreen_exit
+                                    : Icons.fullscreen,
+                                color: Colors.white,
+                              ),
+                              tooltip: _isFullscreen
+                                  ? 'Exit to mini player'
+                                  : 'Fullscreen',
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             ),
-          ),
           if (_isBuffering && !_hasError)
             Container(
               color: Colors.black87,
@@ -694,6 +842,7 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
               ),
             ),
         ],
+        ),
       ),
     );
   }
