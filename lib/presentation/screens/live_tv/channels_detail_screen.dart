@@ -30,6 +30,8 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
   late final VideoController _controller;
   bool _isFavorite = false;
   bool _isBuffering = false;
+  bool _isFullscreen = false;
+  bool _showControls = false;
   bool _hasError = false;
   String _resolution = '';
   String _fps = '';
@@ -296,26 +298,25 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
     _playStream(channels[_selectedChannelIndex]);
   }
 
-  Future<void> _enterFullscreen() async {
-    await SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.immersiveSticky,
-    );
-    await SystemChrome.setPreferredOrientations([
-      DeviceOrientation.landscapeLeft,
-      DeviceOrientation.landscapeRight,
-    ]);
-  }
+  Future<void> _toggleFullscreen() async {
+    final newValue = !_isFullscreen;
+    setState(() => _isFullscreen = newValue);
 
-  Future<void> _exitFullscreen() async {
-    await SystemChrome.setEnabledSystemUIMode(
-      SystemUiMode.manual,
-      overlays: SystemUiOverlay.values,
-    );
-    // Force landscape — never portrait
+    if (newValue) {
+      await SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.immersiveSticky,
+      );
+    } else {
+      await SystemChrome.setEnabledSystemUIMode(
+        SystemUiMode.manual,
+        overlays: SystemUiOverlay.values,
+      );
+    }
     await SystemChrome.setPreferredOrientations([
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
+    setState(() => _showControls = false);
   }
 
   @override
@@ -385,272 +386,313 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
           return Row(
             children: [
               // Left: Channel List 30%
-              Container(
-                width: size.width * 0.3,
-                color: const Color(0xFF0F0F1A),
-                child: Column(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 12,
-                      ),
-                      color: const Color(0xFF07070F),
-                      width: double.infinity,
-                      child: Text(
-                        '${channels.length} Channels',
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
+              if (!_isFullscreen)
+                Container(
+                  width: size.width * 0.3,
+                  color: const Color(0xFF0F0F1A),
+                  child: Column(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
+                        color: const Color(0xFF07070F),
+                        width: double.infinity,
+                        child: Text(
+                          '${channels.length} Channels',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
                       ),
-                    ),
-                    Expanded(
-                      child: ListView.builder(
-                        physics: const BouncingScrollPhysics(),
-                        itemCount: channels.length,
-                        itemBuilder: (context, index) {
-                          final channel = channels[index];
-                          final isSelected =
-                              index == _selectedChannelIndex;
-                          return Material(
-                            color: isSelected
-                                ? const Color(0xFF1A3A5C)
-                                : Colors.transparent,
-                            child: InkWell(
-                              onTap: () =>
-                                  _onChannelSelected(channel, index),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 10,
-                                ),
-                                child: SizedBox(
-                                  height: 56,
-                                  child: Row(
-                                    children: [
-                                    Container(
-                                      width: 40,
-                                      height: 40,
-                                      decoration: BoxDecoration(
-                                        color: const Color(0xFF1E1E2E),
-                                        borderRadius:
-                                            BorderRadius.circular(6),
-                                      ),
-                                      child: channel.logoUrl.isNotEmpty
-                                          ? ClipRRect(
-                                              borderRadius:
-                                                  BorderRadius.circular(
-                                                      6),
-                                              child: Image.network(
-                                                channel.logoUrl,
-                                                cacheWidth: 400,
-                                                cacheHeight: 450,
-                                                filterQuality: FilterQuality.low,
-                                                fit: BoxFit.contain,
-                                                errorBuilder:
-                                                    (_, __, ___) =>
-                                                        const Icon(
+                      Expanded(
+                        child: ListView.builder(
+                          physics: const BouncingScrollPhysics(),
+                          itemCount: channels.length,
+                          itemBuilder: (context, index) {
+                            final channel = channels[index];
+                            final isSelected = index == _selectedChannelIndex;
+                            return Material(
+                              color: isSelected
+                                  ? const Color(0xFF1A3A5C)
+                                  : Colors.transparent,
+                              child: InkWell(
+                                onTap: () => _onChannelSelected(channel, index),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 10,
+                                  ),
+                                  child: SizedBox(
+                                    height: 56,
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 40,
+                                          height: 40,
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFF1E1E2E),
+                                            borderRadius:
+                                                BorderRadius.circular(6),
+                                          ),
+                                          child: channel.logoUrl.isNotEmpty
+                                              ? ClipRRect(
+                                                  borderRadius:
+                                                      BorderRadius.circular(6),
+                                                  child: Image.network(
+                                                    channel.logoUrl,
+                                                    cacheWidth: 400,
+                                                    cacheHeight: 450,
+                                                    filterQuality:
+                                                        FilterQuality.low,
+                                                    fit: BoxFit.contain,
+                                                    errorBuilder:
+                                                        (_, __, ___) =>
+                                                            const Icon(
+                                                      Icons.tv,
+                                                      color: Colors.white54,
+                                                      size: 20,
+                                                    ),
+                                                  ),
+                                                )
+                                              : const Icon(
                                                   Icons.tv,
                                                   color: Colors.white54,
                                                   size: 20,
                                                 ),
-                                              ),
-                                            )
-                                          : const Icon(
-                                              Icons.tv,
-                                              color: Colors.white54,
-                                              size: 20,
-                                            ),
-                                    ),
-                                    const SizedBox(width: 10),
-                                    Expanded(
-                                      child: Text(
-                                        channel.name,
-                                        style: TextStyle(
-                                          color: isSelected
-                                              ? Colors.white
-                                              : Colors.white70,
-                                          fontSize: 13,
-                                          fontWeight: isSelected
-                                              ? FontWeight.bold
-                                              : FontWeight.normal,
                                         ),
-                                        maxLines: 2,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
+                                        const SizedBox(width: 10),
+                                        Expanded(
+                                          child: Text(
+                                            channel.name,
+                                            style: TextStyle(
+                                              color: isSelected
+                                                  ? Colors.white
+                                                  : Colors.white70,
+                                              fontSize: 13,
+                                              fontWeight: isSelected
+                                                  ? FontWeight.bold
+                                                  : FontWeight.normal,
+                                            ),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                        if (isSelected)
+                                          const Icon(
+                                            Icons.play_arrow,
+                                            color: Colors.blue,
+                                            size: 16,
+                                          ),
+                                      ],
                                     ),
-                                    if (isSelected)
-                                      const Icon(
-                                        Icons.play_arrow,
-                                        color: Colors.blue,
-                                        size: 16,
-                                      ),
-                                    ],
                                   ),
                                 ),
                               ),
-                            ),
-                          );
-                        },
+                            );
+                          },
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-
               // Right: Video + Info 70%
               Expanded(
                 child: Column(
                   children: [
                     // Video Player
                     Container(
-                      height:
-                          (size.height - kToolbarHeight) * 0.62,
+                      height: _isFullscreen
+                          ? MediaQuery.of(context).size.height
+                          : (size.height - kToolbarHeight) * 0.62,
                       color: Colors.black,
                       child: Stack(
                         children: [
-                          SizedBox.expand(
-                            child: RepaintBoundary(
-                              child: Video(
-                                controller: _controller,
-                                fit: BoxFit.contain,
-                              ),
-                            ),
-                          ),
-
-                          // Buffering overlay
-                          if (_isBuffering && !_hasError)
-                            Container(
-                              color: Colors.black87,
-                              child: Center(
-                                child: Column(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.center,
-                                  children: [
-                                    const CircularProgressIndicator(
-                                      color: Colors.white,
-                                      strokeWidth: 2,
-                                    ),
-                                    const SizedBox(height: 12),
-                                    Text(
-                                      'Loading ${selectedChannel.name}...',
-                                      style: const TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 13,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 8),
-                                    if (_usingM3u8)
-                                      const Text(
-                                        'Trying HLS stream...',
-                                        style: TextStyle(
-                                          color: Colors.white38,
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                  ],
+                            SizedBox.expand(
+                              child: RepaintBoundary(
+                                child: Video(
+                                  controller: _controller,
+                                  fit: BoxFit.contain,
+                                  controls: NoVideoControls,
                                 ),
                               ),
                             ),
-
-                          // Error overlay
-                          if (_hasError)
-                            Container(
-                              color: Colors.black87,
-                              child: Center(
-                                child: Column(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.center,
-                                  children: [
-                                    const Icon(
-                                      Icons.error_outline,
-                                      color: Colors.red,
-                                      size: 48,
-                                    ),
-                                    const SizedBox(height: 12),
-                                    Text(
-                                      _errorMessage,
-                                      style: const TextStyle(
-                                        color: Colors.white70,
+                            // Buffering overlay
+                            if (_isBuffering && !_hasError)
+                              Container(
+                                color: Colors.black87,
+                                child: Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const CircularProgressIndicator(
+                                        color: Colors.white,
+                                        strokeWidth: 2,
                                       ),
-                                    ),
-                                    const SizedBox(height: 16),
-                                    ElevatedButton.icon(
-                                      onPressed: () =>
-                                          _retryStream(channels),
-                                      icon: const Icon(Icons.refresh),
-                                      label: const Text('Retry'),
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: Colors.blue,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-
-                          // Resolution/FPS overlay
-                          if (_resolution.isNotEmpty ||
-                              _fps.isNotEmpty)
-                            Positioned(
-                              top: 8,
-                              right: 8,
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-                                decoration: BoxDecoration(
-                                  color:
-                                      Colors.black.withValues(alpha: 0.7),
-                                  borderRadius:
-                                      BorderRadius.circular(6),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.end,
-                                  children: [
-                                    if (_resolution.isNotEmpty)
+                                      const SizedBox(height: 12),
                                       Text(
-                                        _resolution,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    if (_fps.isNotEmpty)
-                                      Text(
-                                        _fps,
+                                        'Loading ${selectedChannel.name}...',
                                         style: const TextStyle(
                                           color: Colors.white70,
-                                          fontSize: 11,
+                                          fontSize: 13,
                                         ),
                                       ),
-                                    if (_usingM3u8)
-                                      const Text(
-                                        'HLS',
-                                        style: TextStyle(
-                                          color: Colors.greenAccent,
-                                          fontSize: 10,
+                                      const SizedBox(height: 8),
+                                      if (_usingM3u8)
+                                        const Text(
+                                          'Trying HLS stream...',
+                                          style: TextStyle(
+                                            color: Colors.white38,
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            // Error overlay
+                            if (_hasError)
+                              Container(
+                                color: Colors.black87,
+                                child: Center(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const Icon(
+                                        Icons.error_outline,
+                                        color: Colors.red,
+                                        size: 48,
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        _errorMessage,
+                                        style: const TextStyle(
+                                          color: Colors.white70,
                                         ),
                                       ),
-                                  ],
+                                      const SizedBox(height: 16),
+                                      ElevatedButton.icon(
+                                        onPressed: () => _retryStream(channels),
+                                        icon: const Icon(Icons.refresh),
+                                        label: const Text('Retry'),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.blue,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            Positioned.fill(
+                              child: GestureDetector(
+                                onTap: () {
+                                  setState(() => _showControls = !_showControls);
+                                  if (_showControls) {
+                                    Future.delayed(
+                                      const Duration(seconds: 3),
+                                      () {
+                                        if (mounted) {
+                                          setState(() => _showControls = false);
+                                        }
+                                      },
+                                    );
+                                  }
+                                },
+                                child: AnimatedOpacity(
+                                  opacity: _showControls ? 1.0 : 0.0,
+                                  duration: const Duration(milliseconds: 300),
+                                  child: Container(
+                                    decoration: BoxDecoration(
+                                      gradient: LinearGradient(
+                                        begin: Alignment.topCenter,
+                                        end: Alignment.bottomCenter,
+                                        colors: [
+                                          Colors.transparent,
+                                          Colors.black.withValues(alpha: 0.5),
+                                        ],
+                                      ),
+                                    ),
+                                    child: Stack(
+                                      children: [
+                                        Positioned(
+                                          bottom: 8,
+                                          right: 8,
+                                          child: IconButton(
+                                            icon: Icon(
+                                              _isFullscreen
+                                                  ? Icons.fullscreen_exit
+                                                  : Icons.fullscreen,
+                                              color: Colors.white,
+                                              size: 28,
+                                            ),
+                                            onPressed: _toggleFullscreen,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
+                            // Resolution/FPS overlay
+                            if (_resolution.isNotEmpty || _fps.isNotEmpty)
+                              Positioned(
+                                top: 8,
+                                right: 8,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.7),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      if (_resolution.isNotEmpty)
+                                        Text(
+                                          _resolution,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      if (_fps.isNotEmpty)
+                                        Text(
+                                          _fps,
+                                          style: const TextStyle(
+                                            color: Colors.white70,
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      if (_usingM3u8)
+                                        const Text(
+                                          'HLS',
+                                          style: TextStyle(
+                                            color: Colors.greenAccent,
+                                            fontSize: 10,
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
                         ],
                       ),
                     ),
-
                     // Info Panel
-                    Expanded(
-                      child: Container(
-                        color: const Color(0xFF1E1E1E),
-                        padding: const EdgeInsets.all(16),
-                        child: Column(
+                    if (!_isFullscreen)
+                      Expanded(
+                        child: Container(
+                          color: const Color(0xFF1E1E1E),
+                          padding: const EdgeInsets.all(16),
+                          child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             // Channel name and logo
