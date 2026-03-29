@@ -222,10 +222,6 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
     await _loadFavoriteStatus(channel.id.toString());
   }
 
-  void _onPlayerError(String? _) {
-    _handleError();
-  }
-
   void _handleError() {
     if (!mounted) return;
 
@@ -372,7 +368,6 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
               return _buildPlayerArea(
                 selectedChannel: selectedChannel,
                 channels: channels,
-                fullscreenOnly: true,
               );
             }
 
@@ -498,7 +493,6 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
                         child: _buildPlayerArea(
                           selectedChannel: selectedChannel,
                           channels: channels,
-                          fullscreenOnly: false,
                         ),
                       ),
                       Expanded(
@@ -632,7 +626,6 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
   Widget _buildPlayerArea({
     required Channel selectedChannel,
     required List<Channel> channels,
-    required bool fullscreenOnly,
   }) {
     final controller = _playerController;
 
@@ -655,15 +648,10 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
         child: Stack(
           children: [
           Positioned.fill(
-            child: ThaModernPlayer(
+            child: ThaNativePlayerView(
               controller: controller,
-              autoHideAfter: const Duration(seconds: 3),
-              initialBoxFit: BoxFit.contain,
-              autoFullscreen: false,
-              isFullscreen: fullscreenOnly,
-              doubleTapSeek: const Duration(seconds: 0),
+              boxFit: BoxFit.contain,
               overlay: const SizedBox.shrink(),
-              onError: _onPlayerError,
             ),
           ),
           if (_showControls)
