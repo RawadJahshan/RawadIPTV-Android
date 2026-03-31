@@ -14,95 +14,75 @@ class PlaylistSyncProgress {
 }
 
 class PlaylistSyncService {
+  static const String _accountInfo = 'account_info';
   static const String _liveCategories = 'live_categories';
-  static const String _liveStreams = 'live_streams';
   static const String _vodCategories = 'vod_categories';
-  static const String _vodStreams = 'vod_streams';
   static const String _seriesCategories = 'series_categories';
-  static const String _seriesList = 'series_list';
+
+  static const Duration accountInfoTtl = Duration(minutes: 5);
+  static const Duration categoriesTtl = Duration(minutes: 30);
 
   static Future<void> syncLightweightCatalog({
     required String profileId,
     required XtreamApi xtreamApi,
     required void Function(PlaylistSyncProgress progress) onProgress,
+    bool forceRefresh = false,
   }) async {
+    if (forceRefresh) {
+      XtreamApi.clearAllInMemoryCaches();
+      await CatalogCacheService.clearProfileCatalog(profileId);
+    }
+
     onProgress(
       const PlaylistSyncProgress(
         title: 'Adding Playlist Content',
-        status: 'Fetching categories...',
-        progress: 0.1,
+        status: 'Fetching account info...',
+        progress: 0.2,
       ),
     );
+    final accountInfo = await xtreamApi.getAccountInfo();
 
+    onProgress(
+      const PlaylistSyncProgress(
+        title: 'Adding Playlist Content',
+        status: 'Fetching Live TV categories...',
+        progress: 0.45,
+      ),
+    );
     final liveCategories = await xtreamApi.getLiveCategories();
+
+    onProgress(
+      const PlaylistSyncProgress(
+        title: 'Adding Playlist Content',
+        status: 'Fetching movie categories...',
+        progress: 0.65,
+      ),
+    );
     final vodCategories = await xtreamApi.getVodCategories();
+
+    onProgress(
+      const PlaylistSyncProgress(
+        title: 'Adding Playlist Content',
+        status: 'Fetching series categories...',
+        progress: 0.8,
+      ),
+    );
     final seriesCategories = await xtreamApi.getSeriesCategories();
 
     onProgress(
       const PlaylistSyncProgress(
         title: 'Adding Playlist Content',
-        status: 'Loading Live TV...',
-        progress: 0.35,
-      ),
-    );
-    final liveStreams = await xtreamApi.getLiveStreams();
-
-    onProgress(
-      const PlaylistSyncProgress(
-        title: 'Adding Playlist Content',
-        status: 'Loading Movies...',
-        progress: 0.55,
-      ),
-    );
-    final vodStreams = await xtreamApi.getVodStreamsStrict();
-
-    onProgress(
-      const PlaylistSyncProgress(
-        title: 'Adding Playlist Content',
-        status: 'Loading Series...',
-        progress: 0.75,
-      ),
-    );
-    final seriesList = await xtreamApi.getSeries();
-
-    onProgress(
-      const PlaylistSyncProgress(
-        title: 'Adding Playlist Content',
-        status: 'Saving content...',
+        status: 'Saving metadata...',
         progress: 0.9,
       ),
     );
 
-    await CatalogCacheService.saveCatalogSection(
-      profileId,
-      _liveCategories,
-      liveCategories,
-    );
-    await CatalogCacheService.saveCatalogSection(
-      profileId,
-      _liveStreams,
-      liveStreams,
-    );
-    await CatalogCacheService.saveCatalogSection(
-      profileId,
-      _vodCategories,
-      vodCategories,
-    );
-    await CatalogCacheService.saveCatalogSection(
-      profileId,
-      _vodStreams,
-      vodStreams,
-    );
-    await CatalogCacheService.saveCatalogSection(
-      profileId,
-      _seriesCategories,
-      seriesCategories,
-    );
-    await CatalogCacheService.saveCatalogSection(
-      profileId,
-      _seriesList,
-      seriesList,
-    );
+    final accountList = accountInfo.isEmpty ? <Map<String, dynamic>>[] : <Map<String, dynamic>>[accountInfo];
+
+    await CatalogCacheService.saveCatalogSection(profileId, _accountInfo, accountList);
+    await CatalogCacheService.saveCatalogSection(profileId, _liveCategories, liveCategories);
+    await CatalogCacheService.saveCatalogSection(profileId, _vodCategories, vodCategories);
+    await CatalogCacheService.saveCatalogSection(profileId, _seriesCategories, seriesCategories);
     await CatalogCacheService.setLastRefresh(profileId, DateTime.now().toUtc());
 
     onProgress(
@@ -115,26 +95,38 @@ class PlaylistSyncService {
   }
 
   static Future<List<Map<String, dynamic>>> getLiveCategories(String profileId) {
-    return CatalogCacheService.getCatalogSection(profileId, _liveCategories);
-  }
-
-  static Future<List<Map<String, dynamic>>> getLiveStreams(String profileId) {
-    return CatalogCacheService.getCatalogSection(profileId, _liveStreams);
+    return CatalogCacheService.getCatalogSectionIfFresh(
+      profileId,
+      _liveCategories,
+      ttl: categoriesTtl,
+    );
   }
 
   static Future<List<Map<String, dynamic>>> getVodCategories(String profileId) {
-    return CatalogCacheService.getCatalogSection(profileId, _vodCategories);
-  }
-
-  static Future<List<Map<String, dynamic>>> getVodStreams(String profileId) {
-    return CatalogCacheService.getCatalogSection(profileId, _vodStreams);
+    return CatalogCacheService.getCatalogSectionIfFresh(
+      profileId,
+      _vodCategories,
+      ttl: categoriesTtl,
+    );
   }
 
   static Future<List<Map<String, dynamic>>> getSeriesCategories(String profileId) {
-    return CatalogCacheService.getCatalogSection(profileId, _seriesCategories);
+    return CatalogCacheService.getCatalogSectionIfFresh(
+      profileId,
+      _seriesCategories,
+      ttl: categoriesTtl,
+    );
   }
 
-  static Future<List<Map<String, dynamic>>> getSeriesList(String profileId) {
-    return CatalogCacheService.getCatalogSection(profileId, _seriesList);
+  static Future<Map<String, dynamic>?> getAccountInfo(String profileId) async {
+    final rows = await CatalogCacheService.getCatalogSectionIfFresh(
+      profileId,
+      _accountInfo,
+      ttl: accountInfoTtl,
+    );
+    if (rows.isEmpty) {
+      return null;
+    }
+    return rows.first;
   }
 }

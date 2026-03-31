@@ -6,8 +6,6 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../../../data/datasources/remote/xtream_api.dart';
 import '../../../data/models/channel.dart';
 import '../../../data/models/live_tv_category.dart';
-import '../../../data/services/playlist_sync_service.dart';
-import '../../../data/services/profile_service.dart';
 import '../../../utils/favorites_manager.dart';
 
 class ChannelsDetailScreen extends StatefulWidget {
@@ -166,26 +164,9 @@ class _ChannelsDetailScreenState extends State<ChannelsDetailScreen> {
   }
 
   Future<List<Channel>> _loadChannels() async {
-    List<Map<String, dynamic>> rawChannels = <Map<String, dynamic>>[];
-    final activeProfile = await ProfileService.getActiveProfile();
-    if (activeProfile != null) {
-      final cached = await PlaylistSyncService.getLiveStreams(activeProfile.id);
-      if (cached.isNotEmpty) {
-        rawChannels = cached
-            .where(
-              (item) =>
-                  int.tryParse(item['category_id']?.toString() ?? '') ==
-                  widget.category.id,
-            )
-            .toList();
-      }
-    }
-
-    if (rawChannels.isEmpty) {
-      rawChannels = await widget.xtreamApi.getLiveStreams(
-        categoryId: widget.category.id,
-      );
-    }
+    final rawChannels = await widget.xtreamApi.getLiveStreams(
+      categoryId: widget.category.id,
+    );
 
     final channels = rawChannels
         .map((json) => Channel.fromJson(

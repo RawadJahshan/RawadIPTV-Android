@@ -7,8 +7,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../data/datasources/remote/xtream_api.dart';
 import '../../../data/services/favorites_service.dart';
-import '../../../data/services/playlist_sync_service.dart';
-import '../../../data/services/profile_service.dart';
 import '../../../data/services/watch_progress_service.dart';
 import '../player/movie_player_screen.dart';
 import 'series_detail_screen.dart';
@@ -76,28 +74,10 @@ class _SeriesListScreenState extends State<SeriesListScreen> {
 
     try {
       List<Map<String, dynamic>> rawSeries = <Map<String, dynamic>>[];
-      final activeProfile = await ProfileService.getActiveProfile();
-      if (activeProfile != null) {
-        final cached = await PlaylistSyncService.getSeriesList(activeProfile.id);
-        if (cached.isNotEmpty) {
-          rawSeries = widget.categoryId == -1
-              ? cached
-              : cached
-                  .where(
-                    (item) =>
-                        int.tryParse(item['category_id']?.toString() ?? '') ==
-                        widget.categoryId,
-                  )
-                  .toList();
-        }
-      }
-
-      if (rawSeries.isEmpty) {
-        if (widget.categoryId == -1) {
-          rawSeries = await widget.xtreamApi.getSeries();
-        } else {
-          rawSeries = await widget.xtreamApi.getSeries(categoryId: widget.categoryId);
-        }
+      if (widget.categoryId == -1) {
+        rawSeries = await widget.xtreamApi.getSeries();
+      } else {
+        rawSeries = await widget.xtreamApi.getSeries(categoryId: widget.categoryId);
       }
 
       if (!mounted) return;

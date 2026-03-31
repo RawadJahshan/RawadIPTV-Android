@@ -431,7 +431,6 @@ class _AddProfileDialog extends StatefulWidget {
 class _AddProfileDialogState extends State<_AddProfileDialog> {
   final _usernameController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _api = XtreamApi();
   bool _isLoading = false;
   bool _obscurePassword = true;
 

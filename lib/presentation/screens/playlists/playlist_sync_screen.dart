@@ -8,12 +8,14 @@ class PlaylistSyncScreen extends StatefulWidget {
   final Profile profile;
   final XtreamApi xtreamApi;
   final String title;
+  final bool forceRefresh;
 
   const PlaylistSyncScreen({
     super.key,
     required this.profile,
     required this.xtreamApi,
     this.title = 'Adding Playlist Content',
+    this.forceRefresh = false,
   });
 
   @override
@@ -37,6 +39,7 @@ class _PlaylistSyncScreenState extends State<PlaylistSyncScreen> {
       await PlaylistSyncService.syncLightweightCatalog(
         profileId: widget.profile.id,
         xtreamApi: widget.xtreamApi,
+        forceRefresh: widget.forceRefresh,
         onProgress: (progress) {
           if (!mounted) {
             return;
@@ -133,7 +136,7 @@ class _PlaylistSyncScreenState extends State<PlaylistSyncScreen> {
                       const Padding(
                         padding: EdgeInsets.only(top: 8),
                         child: Text(
-                          'Catalog cache is ready for fast browsing.',
+                          'Metadata sync completed. Content loads on demand for faster startup.',
                           style: TextStyle(color: Colors.white54),
                         ),
                       ),
