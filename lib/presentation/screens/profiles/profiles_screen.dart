@@ -9,6 +9,7 @@ import '../../../data/models/profile.dart';
 import '../../../data/models/user_info.dart';
 import '../../../data/services/profile_service.dart';
 import '../home/home_dashboard.dart';
+import '../playlists/playlist_sync_screen.dart';
 import 'package:intl/intl.dart';
 
 String formatUnixTimestamp(String unixTimestamp) {
@@ -56,7 +57,10 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
     setState(() => _profiles = profiles);
   }
 
-  void _selectProfile(Profile profile) async {
+  Future<void> _selectProfile(
+    Profile profile, {
+    bool shouldSyncCatalog = false,
+  }) async {
     setState(() => _isLoading = true);
 
     final xtreamApi = XtreamApi();
@@ -69,6 +73,23 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
     await ProfileService.setActiveProfile(profile.id);
 
     if (!mounted) return;
+
+    if (shouldSyncCatalog) {
+      final synced = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PlaylistSyncScreen(
+            profile: profile,
+            xtreamApi: xtreamApi,
+          ),
+        ),
+      );
+      if (synced != true || !mounted) {
+        setState(() => _isLoading = false);
+        return;
+      }
+    }
+
     setState(() => _isLoading = false);
 
     Navigator.pushReplacement(
@@ -122,8 +143,9 @@ class _ProfilesScreenState extends State<ProfilesScreen> {
     showDialog(
       context: context,
       builder: (context) => _AddProfileDialog(
-        onProfileAdded: () {
+        onProfileAdded: (profile) async {
           _loadProfiles();
+          await _selectProfile(profile, shouldSyncCatalog: true);
         },
       ),
     );
@@ -398,7 +420,7 @@ class _ProfileCard extends StatelessWidget {
 }
 
 class _AddProfileDialog extends StatefulWidget {
-  final VoidCallback onProfileAdded;
+  final ValueChanged<Profile> onProfileAdded;
 
   const _AddProfileDialog({required this.onProfileAdded});
 
@@ -478,7 +500,7 @@ class _AddProfileDialogState extends State<_AddProfileDialog> {
       if (!mounted) return;
       setState(() => _isLoading = false);
       Navigator.pop(context);
-      widget.onProfileAdded();
+      widget.onProfileAdded(profile);
     } catch (_) {
       if (!mounted) return;
       setState(() => _isLoading = false);

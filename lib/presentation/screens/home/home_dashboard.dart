@@ -6,7 +6,10 @@ import '../live_tv/live_tv_categories_screen.dart';
 import '../movies/movies_screen.dart';
 import '../series/series_categories_screen.dart';
 import '../../../data/datasources/remote/xtream_api.dart';
+import '../../../data/services/catalog_cache_service.dart';
+import '../../../data/services/profile_service.dart';
 import '../profiles/profiles_screen.dart';
+import '../playlists/playlist_sync_screen.dart';
 import '../settings/settings_screen.dart';
 
 class HomeDashboard extends StatefulWidget {
@@ -26,6 +29,8 @@ class HomeDashboard extends StatefulWidget {
 }
 
 class _HomeDashboardState extends State<HomeDashboard> {
+  DateTime? _lastRefreshUtc;
+
   @override
   void initState() {
     super.initState();
@@ -33,6 +38,34 @@ class _HomeDashboardState extends State<HomeDashboard> {
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
     ]);
+    _loadLastRefresh();
+  }
+
+  Future<void> _loadLastRefresh() async {
+    final profile = await ProfileService.getActiveProfile();
+    if (profile == null) return;
+    final ts = await CatalogCacheService.getLastRefresh(profile.id);
+    if (!mounted) return;
+    setState(() => _lastRefreshUtc = ts);
+  }
+
+  Future<void> _refreshPlaylist() async {
+    final profile = await ProfileService.getActiveProfile();
+    if (profile == null || !mounted) return;
+
+    final done = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PlaylistSyncScreen(
+          profile: profile,
+          xtreamApi: widget.xtreamApi,
+          title: 'Refresh Playlist',
+        ),
+      ),
+    );
+    if (done == true) {
+      _loadLastRefresh();
+    }
   }
 
   Widget _buildMenuCard(
@@ -101,6 +134,19 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     label: const Text('Switch Profile'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF1A1A2E),
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: _refreshPlaylist,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Refresh Playlist'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF223047),
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
@@ -213,14 +259,24 @@ class _HomeDashboardState extends State<HomeDashboard> {
               const SizedBox(height: 16),
               Align(
                 alignment: Alignment.bottomRight,
-                child: Text(
-                  'Expiration: ${widget.expiryDate}',
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 14,
-                    height: 1.5,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      'Expiration: ${widget.expiryDate}',
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 14,
+                        height: 1.5,
+                      ),
+                    ),
+                    if (_lastRefreshUtc != null)
+                      Text(
+                        'Last refresh: ${DateFormat('yyyy-MM-dd HH:mm').format(_lastRefreshUtc!.toLocal())}',
+                        style: const TextStyle(color: Colors.white54, fontSize: 12),
+                      ),
+                  ],
                 ),
               ),
             ],

@@ -5,6 +5,8 @@ import 'package:flutter/services.dart';
 import '../../../data/datasources/remote/xtream_api.dart';
 import '../../../data/models/movie_item.dart';
 import '../../../data/services/favorites_service.dart';
+import '../../../data/services/playlist_sync_service.dart';
+import '../../../data/services/profile_service.dart';
 import '../../../data/services/watch_progress_service.dart';
 import 'movie_detail_screen.dart';
 
@@ -134,13 +136,30 @@ class _MovieListScreenState extends State<MovieListScreen> {
     }
 
     try {
-      final List<Map<String, dynamic>> rawStreams;
-      if (widget.categoryId == -1) {
-        rawStreams = await widget.xtreamApi.getVodStreamsStrict();
-      } else {
-        rawStreams = await widget.xtreamApi.getVodStreamsStrict(
-          categoryId: widget.categoryId,
-        );
+      List<Map<String, dynamic>> rawStreams = <Map<String, dynamic>>[];
+      final activeProfile = await ProfileService.getActiveProfile();
+      if (activeProfile != null) {
+        final cached = await PlaylistSyncService.getVodStreams(activeProfile.id);
+        if (cached.isNotEmpty) {
+          rawStreams = widget.categoryId == -1
+              ? cached
+              : cached
+                  .where(
+                    (item) => int.tryParse(item['category_id']?.toString() ?? '') ==
+                        widget.categoryId,
+                  )
+                  .toList();
+        }
+      }
+
+      if (rawStreams.isEmpty) {
+        if (widget.categoryId == -1) {
+          rawStreams = await widget.xtreamApi.getVodStreamsStrict();
+        } else {
+          rawStreams = await widget.xtreamApi.getVodStreamsStrict(
+            categoryId: widget.categoryId,
+          );
+        }
       }
 
       final movies = rawStreams.map((json) => MovieItem.fromJson(json)).toList();
