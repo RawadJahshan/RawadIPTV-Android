@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 
 import '../../../data/datasources/remote/xtream_api.dart';
 import '../../../data/models/movie_category.dart';
+import '../../../data/services/playlist_sync_service.dart';
+import '../../../data/services/profile_service.dart';
 import 'series_list_screen.dart';
 
 class SeriesCategoriesScreen extends StatefulWidget {
@@ -36,6 +38,14 @@ class _SeriesCategoriesScreenState extends State<SeriesCategoriesScreen> {
   }
 
   Future<List<MovieCategory>> _fetchCategories() async {
+    final activeProfile = await ProfileService.getActiveProfile();
+    if (activeProfile != null) {
+      final cached =
+          await PlaylistSyncService.getSeriesCategories(activeProfile.id);
+      if (cached.isNotEmpty) {
+        return cached.map((json) => MovieCategory.fromJson(json)).toList();
+      }
+    }
     final raw = await widget.xtreamApi.getSeriesCategories();
     return raw.map((json) => MovieCategory.fromJson(json)).toList();
   }
