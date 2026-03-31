@@ -60,6 +60,7 @@ class _HomeDashboardState extends State<HomeDashboard> {
           profile: profile,
           xtreamApi: widget.xtreamApi,
           title: 'Refresh Playlist',
+          forceRefresh: true,
         ),
       ),
     );
@@ -134,19 +135,6 @@ class _HomeDashboardState extends State<HomeDashboard> {
                     label: const Text('Switch Profile'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF1A1A2E),
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton.icon(
-                    onPressed: _refreshPlaylist,
-                    icon: const Icon(Icons.refresh, size: 18),
-                    label: const Text('Refresh Playlist'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF223047),
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
@@ -239,6 +227,12 @@ class _HomeDashboardState extends State<HomeDashboard> {
                         '/favorites',
                         arguments: widget.xtreamApi,
                       ),
+                    ),
+                    _buildMenuCard(
+                      context,
+                      label: 'REFRESH\nPLAYLIST',
+                      icon: Icons.refresh,
+                      onTap: _refreshPlaylist,
                     ),
                     _buildMenuCard(
                       context,

@@ -2,10 +2,20 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import '../../../core/constants/app_constants.dart';
 
+
+class _CacheEntry {
+  final dynamic data;
+  final DateTime expiresAt;
+
+  const _CacheEntry({required this.data, required this.expiresAt});
+
+  bool get isExpired => DateTime.now().isAfter(expiresAt);
+}
+
 class XtreamApi {
   late final Dio _dio;
   static final Set<XtreamApi> _instances = <XtreamApi>{};
-  final Map<String, dynamic> _memoryResponseCache = <String, dynamic>{};
+  final Map<String, _CacheEntry> _memoryResponseCache = <String, _CacheEntry>{};
 
   late String _serverUrl;
   late String _username;
@@ -95,6 +105,29 @@ class XtreamApi {
       return {'success': false, 'message': 'Invalid username or password'};
     } catch (e) {
       return {'success': false, 'message': 'Invalid username or password'};
+    }
+  }
+
+  Future<Map<String, dynamic>> getAccountInfo() async {
+    final url = '$_baseUrl&action=get_account_info';
+    final cached = _memoryResponseCache[url];
+    if (cached != null && !cached.isExpired && cached.data is Map<String, dynamic>) {
+      return Map<String, dynamic>.from(cached.data as Map<String, dynamic>);
+    }
+
+    try {
+      final response = await _dio.get(url);
+      final map = response.data is Map
+          ? Map<String, dynamic>.from(response.data as Map)
+          : <String, dynamic>{};
+      _memoryResponseCache[url] = _CacheEntry(
+        data: map,
+        expiresAt: DateTime.now().add(_ttlForUrl(url)),
+      );
+      return map;
+    } catch (e) {
+      debugPrint('getAccountInfo error: $e');
+      return <String, dynamic>{};
     }
   }
 
@@ -228,13 +261,29 @@ class XtreamApi {
     Options? options,
   }) async {
     final cached = _memoryResponseCache[url];
-    if (cached is List<Map<String, dynamic>>) {
-      return cached.map((item) => Map<String, dynamic>.from(item)).toList();
+    if (cached != null && !cached.isExpired && cached.data is List<Map<String, dynamic>>) {
+      final list = cached.data as List<Map<String, dynamic>>;
+      return list.map((item) => Map<String, dynamic>.from(item)).toList();
     }
 
     final response = await _dio.get(url, options: options);
     final parsed = _parseList(response.data);
-    _memoryResponseCache[url] = parsed.map((item) => Map<String, dynamic>.from(item)).toList();
+    _memoryResponseCache[url] = _CacheEntry(
+      data: parsed.map((item) => Map<String, dynamic>.from(item)).toList(),
+      expiresAt: DateTime.now().add(_ttlForUrl(url)),
+    );
     return parsed;
+  }
+
+  Duration _ttlForUrl(String url) {
+    if (url.contains('get_account_info')) {
+      return const Duration(minutes: 5);
+    }
+    if (url.contains('get_live_categories') ||
+        url.contains('get_vod_categories') ||
+        url.contains('get_series_categories')) {
+      return const Duration(minutes: 30);
+    }
+    return const Duration(minutes: 10);
   }
 }
